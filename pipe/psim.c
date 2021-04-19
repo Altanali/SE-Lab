@@ -12,14 +12,14 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <string.h>
-
+#include <assert.h>
 #include "isa.h"
 #include "pipeline.h"
 #include "stages.h"
 #include "sim.h"
 
 char simname[] = "Y86-64 Processor: PIPE";
-
+int inputSize(itype_t);
 /* Parameters modifed by the command line */
 char *object_filename;   /* The input object file name. */
 FILE *object_file;       /* Input file handle */
@@ -517,14 +517,38 @@ static byte_t sim_step_pipe(word_t ccount)
 void do_fetch_stage()
 {
     /* your implementation */
-
+    //Fetch the OPq from memory. This should only be a single byte long.
+    byte_t instruction_byte = HPACK(0x0, 0x0); 
+    byte_t register_byte = HPACK(0x0, 0x0);
+    imem_error = !get_byte_val(mem, f_pc, &instruction_byte);
+    imem_icode = HI4(instruction_byte); imem_ifun = LO4(instruction_byte);
+    decode_input->icode = imem_icode; decode_input->ifun = imem_ifun;
+    int fetch_size = inputSize(imem_icode);
+    assert(!imem_error);
+    switch(fetch_size) {
+        case(10) :
+            sim_log("10-Byte Fetch\n");
+            imem_error |= !get_byte_val(mem, f_pc + sizeof(byte_t), &register_byte);
+            //we expect the HI4 of register_byte to be F. 
+            decode_input->status = STAT_AOK;
+            if (HI4(register_byte) != 0xF) {
+                fetch_output->status = STAT_INS;
+            }
+            decode_input->ra = HI4(register_byte);
+            decode_input->rb = LO4(register_byte);
+            imem_error |= get_word_val(mem, f_pc + 2*sizeof(byte_t), &(decode_input->valc));
+            decode_input->valp = f_pc + 2*sizeof(byte_t) + sizeof(word_t);
+            fetch_input->predPC = decode_input->valp;
+            break;
+        default :
+            sim_log("Default\n");
+    }
     /* logging function, do not change this */
     if (!imem_error) {
         sim_log("\tFetch: f_pc = 0x%llx, f_instr = %s\n",
             f_pc, iname(HPACK(decode_input->icode, decode_input->ifun)));
     }
 }
-
 
 /*************************** Decode stage ***************************
  * TODO: update [*execute_input]
@@ -534,6 +558,34 @@ void do_fetch_stage()
 void do_decode_stage()
 {
     /* your implementation */
+    execute_input->status = decode_output->status;
+    execute_input->icode = decode_output->icode; execute_input->ifun = decode_output->ifun;
+    //Read from registers.
+    execute_input->vala = get_reg_val(mem, decode_output->ra);
+    execute_input->valb = get_reg_val(mem, decode_output->rb);
+    execute_input->srca = decode_output->ra;
+    execute_input->srcb = decode_output->rb;
+    execute_input->valc = decode_output->valc;
+
+    //Get deste if necessary.
+    execute_input->deste = decode_output->rb;
+    switch(decode_output->icode) {
+        case(I_PUSHQ) :
+            execute_input->destm = get_reg_val(mem, REG_RSP) - sizeof(word_t);
+            break;
+        case(I_POPQ) : 
+            execute_input->destm = get_reg_val(mem, REG_RSP);
+            break;
+        case(I_MRMOVQ) :
+            execute_input->destm = get_reg_val(mem, decode_output->ra);
+            break;
+        case(I_RMMOVQ) :
+            execute_input->destm = get_reg_val(mem, decode_output->rb);
+            break;
+        default:
+            execute_input->destm = 0; 
+    }
+
 }
 
 /************************** Execute stage **************************
@@ -552,6 +604,43 @@ void do_execute_stage()
     alua = alub = 0;
 
     /* your implementation */
+    memory_input->icode = execute_output->icode; memory_input->ifun = execute_output->ifun;
+    memory_input->vala = execute_output->vala; memory_input->srca = execute_output->srca;
+    memory_input->status = execute_output->status;
+    memory_input->deste = execute_output->deste;
+    //calculate effective addresses if necessary
+    switch(execute_output->icode) {
+        case(I_RMMOVQ) :
+        case(I_MRMOVQ) : 
+            memory_input->destm = execute_output->destm + execute_output->valc;
+            break;
+        case(I_POPQ) : 
+            memory_input->destm = get_reg_val(mem, REG_RSP);
+            set_reg_val(mem, REG_RSP, memory_input->destm + sizeof(word_t));
+            break;
+        case(I_PUSHQ) : 
+            set_reg_val(mem, REG_RSP, get_reg_val(mem, REG_RSP) - sizeof(word_t));
+            memory_input->destm = get_reg_val(mem, REG_RSP);
+        case(I_ALU) :
+            memory_input->vale = compute_alu(memory_input->ifun, execute_output->vala, execute_output->valb);
+            cc_in = compute_cc(memory_input->ifun, execute_output->vala, execute_output->valb); 
+            break;
+        case(I_RRMOVQ) :
+            memory_input->vale = execute_output->vala;
+            break;
+        case(I_IRMOVQ) :
+            memory_input->vale = execute_output->valc;
+            break;
+        default :
+            break;
+    }
+    //Perform OPq via ALU if necessary
+    if(execute_output->icode == I_ALU) {
+         
+    }
+
+    //perform jump checks later...
+
 
     /* logging functions, do not change these */
     if (execute_output->icode == I_JMP) {
@@ -583,6 +672,21 @@ void do_memory_stage()
     dmem_error = false;
 
     /* your implementation */
+    writeback_input->status = memory_output->status;
+    writeback_input->icode = memory_output->icode; writeback_input->ifun = memory_output->ifun;
+    writeback_input->vale = memory_output->vale; writeback_input->deste = memory_output->deste;
+    writeback_input->destm = memory_output->deste;
+
+    switch(memory_output->icode) {
+        case(I_POPQ) : 
+        case(I_MRMOVQ) : 
+            get_word_val(mem, memory_output->destm,&writeback_input->valm);
+            break;
+        case(I_PUSHQ) :
+        case(I_RMMOVQ) : 
+            set_word_val(mem, memory_output->destm, memory_output->vala);
+            break;
+    }
 
     if (mem_read) {
         if ((dmem_error |= !get_word_val(mem, mem_addr, &mem_data))) {
@@ -612,8 +716,19 @@ void do_writeback_stage()
     wb_valE  = 0;
     wb_destM = REG_NONE;
     wb_valM  = 0;
-
+    if(writeback_output->deste != 0xF) assert(1 == 0);
     /* your implementation */
+    switch(writeback_output->icode) {
+        case(I_ALU) :
+        case(I_IRMOVQ) :
+        case(I_RRMOVQ) : 
+            set_reg_val(mem, writeback_output->deste, writeback_output->vale);
+            break;
+        case(I_MRMOVQ) : 
+            set_reg_val(mem, writeback_output->destm, writeback_output->valm);
+    }
+
+
 
     status = writeback_output->status;
     if (wb_destE != REG_NONE &&  writeback_output -> status == STAT_AOK) {
@@ -642,6 +757,14 @@ p_stat_t pipe_cntl(char *name, word_t stall, word_t bubble)
     } else {
 	    return bubble ? P_BUBBLE : P_LOAD;
     }
+}
+
+/*
+ * inputSize() : returns the number of bytes of an instruction of a given icode (possible outputs are 1, 2, or 10)
+ */
+int inputSize(itype_t icode) {
+    int sizes[15] = {1, 1, 2, 10, 10, 10, 2, 9, 9, 1, 2, 2, 10, 10, 10};
+    return sizes[icode];
 }
 
 /******************** Pipeline Register Control ********************
