@@ -525,7 +525,9 @@ void do_fetch_stage()
         selected_PC = wb_valM;
     else if(decode_output->icode == I_CALL)
         selected_PC = decode_output->valc;
-    else
+    else if(memory_output->icode == I_JMP)
+        selected_PC = memory_output->takebranch ? fetch_output->predPC : memory_output->vala;
+    else 
         selected_PC = decode_output->valp;
     //Fetch the OPq from memory. This should only be a single byte long.
     byte_t instruction_byte = HPACK(0x0, 0x0); 
@@ -586,8 +588,11 @@ void do_fetch_stage()
             //No addition fetch necessary
             decode_input->valp = selected_PC + 1;
             fetch_input->predPC = decode_input->valp;
+            break;
         default :
-            sim_log("Default\n");
+            decode_input->status = STAT_INS;
+            sim_log("Bad ICode");
+            break;
     }
     /* logging function, do not change this */
     if (!imem_error) {
@@ -633,10 +638,10 @@ void do_decode_stage()
             execute_input->srca = decode_output->ra;
             break;
         case(I_POPQ): 
-            execute_input->destm = decode_output->ra;
             execute_input->deste = REG_RSP;
             execute_input->srca = REG_RSP;
             execute_input->srcb = REG_RSP;
+            execute_input->destm = decode_output->ra;
             break;
         case(I_MRMOVQ):
             execute_input->destm = decode_output->ra;
@@ -727,7 +732,8 @@ void do_execute_stage()
             memory_input->destm = execute_output->destm;
             break;
         case(I_POPQ): 
-            memory_input->vale = execute_output->valb + 8;
+            memory_input->destm = execute_output->destm;
+            memory_input->vale = execute_output->valb;
             break;
         case(I_PUSHQ): 
             memory_input->vale = execute_output->valb - 8;
@@ -739,8 +745,9 @@ void do_execute_stage()
             break;
         case(I_CALL):
             //vala == valp which must be written into memory (as RA)
-            memory_input->vale = execute_output->vala;
-            memory_input->deste = execute_output->valb - 8;
+            memory_input->vala = execute_output->vala;
+            memory_input->vale = execute_output->valb - 8;
+            printf("%d\n",memory_input->deste);
             break;
         case(I_ALU):
             alufun = memory_input->ifun;
@@ -748,7 +755,7 @@ void do_execute_stage()
             alub = execute_output->valb;
             memory_input->vale = compute_alu(memory_input->ifun, alua, alub);
             cc_in = compute_cc(memory_input->ifun, alua, alub); 
-            cc = cc_in;
+            setcc = true;
             break;
         case(I_RRMOVQ) :
             memory_input->vale = execute_output->vala;
@@ -761,8 +768,7 @@ void do_execute_stage()
             break;
         case(I_JMP):
             memory_input->takebranch = cond_holds(cc, memory_input->ifun);
-            memory_input->vala = decode_output->valp;
-            setcc = true;
+            memory_input->vala = execute_output->vala;
             break;
         default:
             sim_log("Invalid icode\n");
@@ -830,11 +836,13 @@ void do_memory_stage()
         case(I_MRMOVQ):
             dmem_error |= !get_word_val(mem, memory_output->vale, &writeback_input->valm);
             writeback_input->destm = memory_output->destm;
+            if(dmem_error)
+                writeback_input->status = STAT_ADR;
             break;
         case(I_CALL):
             mem_write = true;
-            mem_addr = memory_output->deste;
-            mem_data = memory_output->vale;
+            mem_addr = memory_output->vale;
+            mem_data = memory_output->vala;
             writeback_input->vale = mem_addr;
             writeback_input->deste = REG_RSP;
             break;
@@ -842,23 +850,32 @@ void do_memory_stage()
             dmem_error |= !get_word_val(mem, memory_output->vala, &writeback_input->valm);
             writeback_input->deste = REG_RSP; //should always be RSP
             writeback_input->vale = memory_output->vale;
+            if(dmem_error)
+                writeback_input->status = STAT_ADR;
             break;
         case(I_PUSHQ):
             mem_write = true;
             mem_addr = memory_output->vale;
             mem_data = memory_output->vala;
+            writeback_input->vale = mem_addr;
+            writeback_input->deste = REG_RSP;
             break;
         case(I_POPQ):
-            dmem_error |= !get_word_val(mem, memory_output->vala, &writeback_input->valm);
+            dmem_error |= !get_word_val(mem, memory_output->vale, &writeback_input->valm);
+            writeback_input->vale = memory_output->vale + 8;
+            writeback_input->deste = REG_RSP;
+            writeback_input->destm = memory_output->destm;
+            if(dmem_error)
+                writeback_input->status = STAT_ADR;
             break;
         default:
             sim_log("Invalid icode\n.");
             break;
     }
-
     if (mem_write) {
         if ((dmem_error |= !set_word_val(mem, mem_addr, mem_data))) {
             sim_log("\tMemory: Couldn't write to address 0x%llx\n", mem_addr);
+            writeback_input->status = STAT_ADR;
         } else {
             sim_log("\tMemory: Wrote 0x%llx to address 0x%llx\n", mem_data, mem_addr);
         }
@@ -945,6 +962,20 @@ void do_stall_check()
         fetch_state->op = pipe_cntl("PC", true, false);
         decode_state->op = pipe_cntl("ID", false, true);
     }
+    if(decode_output->icode == I_JMP || execute_output->icode == I_JMP) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
+    }
+    if(decode_output->icode == I_HALT || execute_output->icode == I_HALT || memory_output->icode == I_HALT) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
+        return;
+    }
+    if(decode_output->status == STAT_INS || execute_output->status == STAT_INS || memory_output->status == STAT_INS) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
+        return;
+    }
     switch(temp) {
         case(I_ALU):
         case(I_RMMOVQ):
@@ -981,9 +1012,21 @@ void do_stall_check()
             break;
         case(I_CALL):
         case(I_RET):
+        case(I_POPQ):
             stall |= execute_output->deste == REG_RSP || execute_output->destm == REG_RSP;
             if(stall) {
-                sim_log("call stall\n");
+                sim_log("CALL, RET, POP stall\n");
+                fetch_state->op = pipe_cntl("PC", true, false);
+                decode_state->op = pipe_cntl("ID", true, false);
+                execute_state->op = pipe_cntl("EX", false, true);
+            }
+            break;
+        case(I_PUSHQ):
+            ra = decode_output->ra;
+            stall |= execute_output->deste == REG_RSP || execute_output->destm == REG_RSP;
+            stall |= execute_output->deste == ra || execute_output->destm == ra;
+            if(stall) {
+                sim_log("PUSH stall\n");
                 fetch_state->op = pipe_cntl("PC", true, false);
                 decode_state->op = pipe_cntl("ID", true, false);
                 execute_state->op = pipe_cntl("EX", false, true);
