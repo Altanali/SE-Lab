@@ -744,7 +744,6 @@ void do_execute_stage()
             memory_input->vale = execute_output->valb + 8;
             break;
         case(I_CALL):
-            //vala == valp which must be written into memory (as RA)
             memory_input->vala = execute_output->vala;
             memory_input->vale = execute_output->valb - 8;
             printf("%d\n",memory_input->deste);
@@ -835,9 +834,11 @@ void do_memory_stage()
             break;
         case(I_MRMOVQ):
             dmem_error |= !get_word_val(mem, memory_output->vale, &writeback_input->valm);
+            // printf("memory length: %u ", mem->len);
+            // printf("MRMOVQ vale: %llu ", memory_output->vale);
+            // printf("%s", dmem_error ? "error " : "no error ");
+            // printf("value read: %llu\n", writeback_input->valm);
             writeback_input->destm = memory_output->destm;
-            if(dmem_error)
-                writeback_input->status = STAT_ADR;
             break;
         case(I_CALL):
             mem_write = true;
@@ -850,8 +851,6 @@ void do_memory_stage()
             dmem_error |= !get_word_val(mem, memory_output->vala, &writeback_input->valm);
             writeback_input->deste = REG_RSP; //should always be RSP
             writeback_input->vale = memory_output->vale;
-            if(dmem_error)
-                writeback_input->status = STAT_ADR;
             break;
         case(I_PUSHQ):
             mem_write = true;
@@ -865,12 +864,14 @@ void do_memory_stage()
             writeback_input->vale = memory_output->vale + 8;
             writeback_input->deste = REG_RSP;
             writeback_input->destm = memory_output->destm;
-            if(dmem_error)
-                writeback_input->status = STAT_ADR;
             break;
         default:
             sim_log("Invalid icode\n.");
             break;
+    }
+    if(dmem_error) {
+        memory_output->status = STAT_ADR;
+        writeback_input->status = STAT_ADR;
     }
     if (mem_write) {
         if ((dmem_error |= !set_word_val(mem, mem_addr, mem_data))) {
@@ -974,6 +975,12 @@ void do_stall_check()
     if(decode_output->status == STAT_INS || execute_output->status == STAT_INS || memory_output->status == STAT_INS) {
         fetch_state->op = pipe_cntl("PC", true, false);
         decode_state->op = pipe_cntl("ID", false, true);
+        return;
+    }
+    if(decode_output->status == STAT_ADR || execute_output->status == STAT_ADR || memory_output->status == STAT_ADR || writeback_output->status == STAT_ADR) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
+        execute_state->op = pipe_cntl("EX", false, true);
         return;
     }
     switch(temp) {
