@@ -35,6 +35,7 @@ int dirty_eviction_count = 0;
 int clean_eviction_count = 0;
 
 /* TODO: add more globals, structs, macros if necessary */
+cache_line_t *get_ways(cache_t *cache, uword_t addr);
 
 /*
  * Initialize the cache according to specified arguments
@@ -56,6 +57,7 @@ cache_t *create_cache(int s_in, int b_in, int E_in, int d_in)
 
     cache->sets = (cache_set_t*) calloc(S, sizeof(cache_set_t));
     for (unsigned int i = 0; i < S; i++){
+        //Create E lines for each cache set, initalize them.
         cache->sets[i].lines = (cache_line_t*) calloc(cache->E, sizeof(cache_line_t));
         for (unsigned int j = 0; j < cache->E; j++){
             cache->sets[i].lines[j].valid = 0;
@@ -126,6 +128,13 @@ void free_cache(cache_t *cache)
 cache_line_t *get_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
+    cache_line_t *ways = get_ways(cache, addr);
+    unsigned int t = ADDRESS_LENGTH - (cache->s + cache->b);
+    uword_t addr_tag = addr >> (ADDRESS_LENGTH - t); //meh
+    for(int i = 0; i < cache->E; i++){
+        if(ways[i].tag == addr_tag)
+            return &ways[i];
+    }
     return NULL;
 }
 
@@ -136,7 +145,19 @@ cache_line_t *get_line(cache_t *cache, uword_t addr)
 cache_line_t *select_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
-    return NULL;
+    cache_line_t *ways = get_ways(cache, addr);
+    int index = -1;
+    unsigned int max = 0;
+    for(int i = 0; i < cache->E; i++) {
+        if(!ways[i].valid) {
+            return &ways[i];
+        }
+        else if(ways[i].lru >= max) {
+            index = i;
+            max = ways[i].lru;
+        }
+    }
+    return &ways[index];
 }
 
 /* TODO:
@@ -146,20 +167,81 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
 bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
-    return false;
+    bool hit = false;
+    unsigned int t = ADDRESS_LENGTH - (cache->s + cache->b);
+    uword_t addr_tag = addr >> (ADDRESS_LENGTH - t); //meh
+    cache_line_t *ways = get_ways(cache, addr);
+    int way_index;
+    for(int i = 0; i < cache->E; i++) ways[i].lru++;
+    for(way_index = 0; way_index < cache->E; way_index++) {
+        if(ways[way_index].tag == addr_tag && ways[way_index].valid) {
+            printf("Cache hit for address: %llu\n", addr);
+            hit = true;
+            hit_count++;
+            break;
+        }
+    }
+    if(!hit) {
+        printf("Cache miss for address: %llu\n", addr);
+        miss_count++;
+    }
+    else {
+        cache_line_t *way_addr = &ways[way_index];
+        if(operation == WRITE) {
+            way_addr->dirty = true;
+        }
+        way_addr->lru = 0;
+    }
+    
+    return hit;
+
 }
 
+/*
+ * Returns the set of lines (ways) for a given set index. 
+ */
+ cache_line_t *get_ways(cache_t *cache, uword_t addr) {
+    unsigned int t = ADDRESS_LENGTH - (cache->s + cache->b);
+    unsigned int set_index = (addr << t) >> (cache->b + t);
+    return cache->sets[set_index].lines;
+ }
 /* TODO:
  * Handles Misses, evicting from the cache if necessary.
  * Fill out the evicted_line_t struct with info regarding the evicted line.
  */
 evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation, byte_t *incoming_data)
 {
+    printf("Handle Miss Called...\n");
     size_t B = (size_t)pow(2, cache->b);
     evicted_line_t *evicted_line = malloc(sizeof(evicted_line_t));
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
+    unsigned int t = ADDRESS_LENGTH - (cache->s + cache->b);
+    uword_t addr_tag = addr >> (ADDRESS_LENGTH - t); //meh
     /* your implementation */
-    return evicted_line;
+    cache_line_t *way_to_update = select_line(cache, addr);
+    if(way_to_update->valid) {
+        //Time to evict :DDD
+        if(way_to_update->dirty) dirty_eviction_count++;
+        else clean_eviction_count++;
+        evicted_line_t *evict = calloc(1, sizeof(evicted_line_t));
+        evict->valid = way_to_update->valid;
+        evict->dirty = way_to_update->dirty;
+        evict->addr  = addr;
+        evict->data = calloc(B, sizeof(byte_t));
+        for(int i = 0; i < B; i++) {
+            evict->data[i] = way_to_update->data[i];
+        }
+        way_to_update->tag = addr_tag;
+        //TODO, possibly copy over incoming data into way_to_update->data? not sure if we handle this here...
+        return evict;
+    }
+    else {
+        way_to_update->valid = true;
+        
+        way_to_update->tag = addr_tag;
+    }
+    way_to_update->lru = 0;
+    return NULL;
 }
 
 /* TODO:
@@ -169,6 +251,7 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
 void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 {
     /* your implementation */
+    *dest = *get_line(cache, addr)->data;
 }
 
 
@@ -179,6 +262,7 @@ void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 void get_word_cache(cache_t *cache, uword_t addr, word_t *dest) {
 
     /* your implementation */
+    
 }
 
 
