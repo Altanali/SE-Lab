@@ -540,6 +540,7 @@ void do_fetch_stage()
         case HPACK(I_RMMOVQ, F_NONE) :
         case HPACK(I_MRMOVQ, F_NONE) : 
         case HPACK(I_IRMOVQ, F_NONE) : 
+        case HPACK(I_LEAQ, F_NONE) :
             //fetch valc + 2 register bytes.
             imem_error |= !get_byte_val(mem, selected_PC + 1, &register_byte);
             decode_input->ra = HI4(register_byte);
@@ -559,8 +560,12 @@ void do_fetch_stage()
         case HPACK(I_ALU, A_SUB) :
         case HPACK(I_ALU, A_AND) :
         case HPACK(I_ALU, A_XOR) :
+        case HPACK(I_VECADD, F_NONE) :
         case HPACK(I_PUSHQ, F_NONE):
 		case HPACK(I_POPQ, F_NONE):
+        case HPACK(I_SHF, S_HL):
+        case HPACK(I_SHF, S_HR):
+        case HPACK(I_SHF, S_AR):
             //fetch 1 register byte only
             imem_error |= !get_byte_val(mem, selected_PC + 1, &register_byte);
             decode_input->ra = HI4(register_byte);
@@ -651,6 +656,8 @@ void do_decode_stage()
             execute_input->srca = decode_output->ra;
             execute_input->srcb = decode_output->rb;
             break;
+        case(I_VECADD):
+        case(I_SHF):
         case(I_ALU):
             execute_input->srca = decode_output->ra;
             execute_input->srcb = decode_output->rb;
@@ -666,6 +673,10 @@ void do_decode_stage()
             //src b is the address that valp must be written to
             execute_input->srcb = REG_RSP;
             execute_input->deste = REG_RSP;
+            break;
+        case(I_LEAQ):
+            execute_input->srcb = decode_output->rb;
+            execute_input->deste = decode_output->ra;
             break;
         default:
             execute_input->destm = 0; 
@@ -721,6 +732,7 @@ void do_execute_stage()
     }
     //calculate effective addresses if necessary
     switch(execute_output->icode) {
+        case(I_VECADD):
         case(I_NOP):
         case(I_HALT):
             break;
@@ -769,12 +781,51 @@ void do_execute_stage()
             memory_input->takebranch = cond_holds(cc, memory_input->ifun);
             memory_input->vala = execute_output->vala;
             break;
+        case(I_LEAQ):
+            memory_input->vale = execute_output->valc + execute_output->valb;
+            printf("LEAQ: valc = %llu, valb = %llu\n", execute_output->valc, execute_output->valb);
+            break;
         default:
             sim_log("Invalid icode\n");
             break;
     }
 
 
+    //I_VECADD, do it outside switch.
+    if(execute_output->icode == I_VECADD) {
+        word_t s = (execute_output->vala & 0x7F7F7F7F7F7F7F7F) + (execute_output->valb & 0x7F7F7F7F7F7F7F7F);
+        memory_input->vale = ((execute_output->vala^execute_output->valb) & 0x8080808080808080) ^ s;
+        //set condition codes manually. 
+        bool SF = false;
+        bool ZF = true;
+        for(int i = 0; i < sizeof(word_t); i++) {
+            byte_t temp = ((byte_t *)(&memory_input->vale))[i];
+            SF |= (temp & 0x80) == 0x80;
+            ZF &= temp == 0;
+        }
+        cc_in = PACK_CC(ZF, SF, 0);
+        printf("I_VECADD, a: %llu, b: %llu, result: %llu\n", execute_output->vala, execute_output->valb, memory_input->vale);
+        setcc = true;
+    }
+    //I_SHF, do it outside switch.
+    if(execute_output->icode == I_SHF) {
+        switch(execute_output->ifun) {
+            case(S_HL):
+                memory_input->vale = execute_output->valb << execute_output->vala;
+                break;
+            case(S_HR):
+                memory_input->vale = execute_output->valb >> execute_output->vala;
+                break;
+            case(S_AR):
+                memory_input->vale = (uword_t)(((signed long long)(execute_output->valb)) >> execute_output->vala);
+                break;
+        }
+        bool SF = (signed long long)(memory_input->vale) < 0;
+        bool ZF = memory_input->vale == 0;
+        cc_in = PACK_CC(ZF, SF, 0);
+        printf("SHIFT, I_FUN: %u, a: %llu, b: %llu, result: %llu\n", execute_output->ifun, execute_output->vala, execute_output->valb, memory_input->vale);
+        setcc = true; 
+    }
     /* logging functions, do not change these */
     if (execute_output->icode == I_JMP) {
         sim_log("\tExecute: instr = %s, cc = %s, branch %staken\n",
@@ -822,6 +873,8 @@ void do_memory_stage()
         case(I_RRMOVQ):
         case(I_ALU): 
         case(I_IRMOVQ):
+        case(I_VECADD):
+        case(I_SHF):
             writeback_input->deste = memory_output->deste;
             writeback_input->vale = memory_output->vale;
             break;
@@ -860,6 +913,10 @@ void do_memory_stage()
             writeback_input->vale = memory_output->vale + 8;
             writeback_input->deste = REG_RSP;
             writeback_input->destm = memory_output->destm;
+            break;
+        case(I_LEAQ):
+            writeback_input->vale = memory_output->vale;
+            writeback_input->deste = memory_output->deste;
             break;
         default:
             sim_log("Invalid icode\n.");
@@ -980,14 +1037,17 @@ void do_stall_check()
         return;
     }
     switch(temp) {
+        case(I_LEAQ):
         case(I_ALU):
         case(I_RMMOVQ):
+        case(I_SHF):
+        case(I_VECADD):
             ra = decode_output->ra;
             rb = decode_output->rb;
             stall |= execute_output->deste == ra || execute_output->deste == rb;
             stall |= execute_output->destm == ra || execute_output->destm == rb;
             if(stall) {
-                sim_log("ALU or RMMOVQ stall\n");
+                sim_log("ALU, RMMOVQ, SHF, LEAQ, or VECADD stall\n");
                 fetch_state->op = pipe_cntl("PC", true, false);
                 decode_state->op = pipe_cntl("ID", true, false);
                 execute_state->op = pipe_cntl("EX", false, true);
