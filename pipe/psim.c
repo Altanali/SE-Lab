@@ -834,10 +834,6 @@ void do_memory_stage()
             break;
         case(I_MRMOVQ):
             dmem_error |= !get_word_val(mem, memory_output->vale, &writeback_input->valm);
-            // printf("memory length: %u ", mem->len);
-            // printf("MRMOVQ vale: %llu ", memory_output->vale);
-            // printf("%s", dmem_error ? "error " : "no error ");
-            // printf("value read: %llu\n", writeback_input->valm);
             writeback_input->destm = memory_output->destm;
             break;
         case(I_CALL):
