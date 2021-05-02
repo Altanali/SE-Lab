@@ -175,14 +175,12 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
     for(int i = 0; i < cache->E; i++) if(ways[i].valid) ways[i].lru++;
     for(way_index = 0; way_index < cache->E; way_index++) {
         if(ways[way_index].tag == addr_tag && ways[way_index].valid) {
-           // printf("Cache hit for address: %llu\n", addr);
             hit = true;
             hit_count++;
             break;
         }
     }
     if(!hit) {
-        //printf("Cache miss for address: %llu\n", addr);
         miss_count++;
     }
     else {
@@ -217,11 +215,9 @@ evicted_line_t *evict_way(cache_t *cache, uword_t addr, cache_line_t *old_way) {
     uword_t addr_tag = get_tag(cache, addr);
     if(old_way->dirty) {
         dirty_eviction_count++;
-        //printf("Dirty Evicted: %llx\n", addr);
     }
-    else { 
+    else if(old_way->valid){ 
         clean_eviction_count++;
-        //printf("Clean Evicted: %llx\n", addr);
     }
     
     evicted->valid = old_way->valid;
@@ -248,8 +244,6 @@ uword_t get_evict_addr(cache_t *cache, uword_t old_tag, uword_t old_set) {
  cache_line_t *get_ways(cache_t *cache, uword_t addr) {
     unsigned int t = ADDRESS_LENGTH - (cache->s + cache->b);
     unsigned int set_index = (addr << t) >> (cache->b + t);
-    //printf("\nSet_index for %lld: %du\n", addr, set_index);
-    //display_set(cache, set_index);
     return cache->sets[set_index].lines;
  }
 
@@ -260,7 +254,6 @@ uword_t get_evict_addr(cache_t *cache, uword_t old_tag, uword_t old_set) {
  */
 evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation, byte_t *incoming_data)
 {
-    //printf("Handle Miss Called...\n");
     size_t B = (size_t)pow(2, cache->b);
     evicted_line_t *evicted_line = malloc(sizeof(evicted_line_t));
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
@@ -271,10 +264,11 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     evicted_line_t *evicted = evict_way(cache, addr, way_to_update);
     way_to_update->dirty = operation == WRITE;
     way_to_update->lru = 0;
-    //TODO, possibly copy over incoming data into way_to_update->data? not sure if we handle this here...
-    for(int i = 0; i < B; i++) {
-        way_to_update->data[i] = incoming_data[i];
+    if(incoming_data != 0x0){
+        for(int i = 0; i < B; i++) {
+            way_to_update->data[i] = incoming_data[i];
 
+        }
     }
     way_to_update->valid = true;
     way_to_update->tag = addr_tag;
