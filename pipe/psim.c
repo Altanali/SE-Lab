@@ -540,7 +540,7 @@ void do_fetch_stage()
         case HPACK(I_RMMOVQ, F_NONE) :
         case HPACK(I_MRMOVQ, F_NONE) : 
         case HPACK(I_IRMOVQ, F_NONE) : 
-        case HPACK(I_LEAQ, F_NONE) :
+        //case HPACK(I_LEAQ, F_NONE) :
             //fetch valc + 2 register bytes.
             imem_error |= !get_byte_val(mem, selected_PC + 1, &register_byte);
             decode_input->ra = HI4(register_byte);
