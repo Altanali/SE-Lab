@@ -540,7 +540,7 @@ void do_fetch_stage()
         case HPACK(I_RMMOVQ, F_NONE) :
         case HPACK(I_MRMOVQ, F_NONE) : 
         case HPACK(I_IRMOVQ, F_NONE) : 
-        //case HPACK(I_LEAQ, F_NONE) :
+        case HPACK(I_LEAQ, F_NONE) :
             //fetch valc + 2 register bytes.
             imem_error |= !get_byte_val(mem, selected_PC + 1, &register_byte);
             decode_input->ra = HI4(register_byte);
@@ -814,15 +814,16 @@ void do_execute_stage()
                 memory_input->vale = execute_output->valb << execute_output->vala;
                 break;
             case(S_HR):
-                memory_input->vale = execute_output->valb >> execute_output->vala;
+                memory_input->vale = ((unsigned long long)execute_output->valb) >> execute_output->vala;
                 break;
             case(S_AR):
-                memory_input->vale = (uword_t)(((signed long long)(execute_output->valb)) >> execute_output->vala);
+                memory_input->vale = execute_output->valb >> execute_output->vala;
+                break;
+            case(S_NONE):
+                memory_input->vale = 0;
                 break;
         }
-        bool SF = (signed long long)(memory_input->vale) < 0;
-        bool ZF = memory_input->vale == 0;
-        cc_in = PACK_CC(ZF, SF, 0);
+        cc_in = PACK_CC(!memory_input->vale, (memory_input->vale >> 63) & 0x1, 0);
         printf("SHIFT, I_FUN: %u, a: %llu, b: %llu, result: %llu\n", execute_output->ifun, execute_output->vala, execute_output->valb, memory_input->vale);
         setcc = true; 
     }
