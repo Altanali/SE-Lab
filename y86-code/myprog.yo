@@ -1,0 +1,81 @@
+                            | # myprog: recursively reverse a given array
+0x000:                      | 	.pos 0
+0x000: 30f40004000000000000 | 	irmovq stack, %rsp  	# Set up stack pointer
+0x00a: 806400000000000000   | 	call main		# Execute main program
+0x013: 00                   | 	halt			# Terminate program 
+                            | 
+                            | 
+                            | # Array of 10 integers (words)
+0x014: 0100000000000000     | array:	.quad 0x01
+0x01c: 0200000000000000     | 	.quad 0x02
+0x024: 0300000000000000     | 	.quad 0x03
+0x02c: 0400000000000000     |     .quad 0x04
+0x034: 0500000000000000     |     .quad 0x05
+0x03c: 0600000000000000     | 	.quad 0x06
+0x044: 0700000000000000     |     .quad 0x07
+0x04c: 0800000000000000     |     .quad 0x08
+0x054: 0900000000000000     |     .quad 0x09
+0x05c: 0a00000000000000     | 	.quad 0x0a
+                            | 
+                            | 
+0x064:                      | main:
+0x064: 30f71400000000000000 |     irmovq array,%rdi
+0x06e: 30f20900000000000000 | 	irmovq $9, %rdx
+0x078: 30f60000000000000000 |     irmovq $0, %rsi
+0x082: 808c00000000000000   | 	call reverse		# searchMin(array, 4)
+0x08b: 90                   | 	ret
+                            | 
+                            | 
+                            | # void reverse(long *arr, int start, int end)
+                            | # arr in %rdi, start in %rsi, end in %rdx
+0x08c:                      | reverse:
+0x08c: 2045                 |     rrmovq %rsp, %rbp
+0x08e: c044d0ffffffffffffff |     leaq -48(%rsp), %rsp
+0x098: 4075e8ffffffffffffff |     rmmovq %rdi, -24(%rbp)
+0x0a2: 4065e0ffffffffffffff |     rmmovq %rsi, -32(%rbp)
+0x0ac: 4025d8ffffffffffffff |     rmmovq %rdx, -40(%rbp)   
+0x0b6: 2029                 |     rrmovq %rdx, %r9
+0x0b8: 6169                 |     subq %rsi, %r9              # Comparing start and end indices
+0x0ba: 717d01000000000000   |     jle done                    # Base case, end <= start
+0x0c3: 805101000000000000   |     call get_addr               # Gets address of index start in array
+0x0cc: 2009                 |     rrmovq %rax, %r9            # Move &arr[start] to %r9
+0x0ce: 2026                 |     rrmovq %rdx, %rsi          
+0x0d0: 5075e8ffffffffffffff |     mrmovq -24(%rbp), %rdi 
+0x0da: 805101000000000000   |     call get_addr               # Gets address of index end in array
+0x0e3: 200a                 |     rrmovq %rax, %r10           # Move &arr[end] to %r10
+0x0e5: 50b90000000000000000 |     mrmovq 0(%r9), %r11         # Write arr[start] to a temporary register
+0x0ef: 50ca0000000000000000 |     mrmovq 0(%r10), %r12        # Write arr[end] to a temporary register
+0x0f9: 40c90000000000000000 |     rmmovq %r12, 0(%r9)         # Write arr[end] to &arr[start]
+0x103: 40ba0000000000000000 |     rmmovq %r11, 0(%r10)        # Write arr[start] to &arr[end]
+0x10d: 5065e0ffffffffffffff |     mrmovq -32(%rbp), %rsi      
+0x117: c0660100000000000000 |     leaq 1(%rsi), %rsi          # Place start++ into first-parameter register
+0x121: 5025d8ffffffffffffff |     mrmovq -40(%rbp), %rdx
+0x12b: c022ffffffffffffffff |     leaq -1(%rdx), %rdx         # Place end-- into second-parameter register
+0x135: 5075e8ffffffffffffff |     mrmovq -24(%rbp), %rdi      # Place &array into %rdi
+0x13f: 808c00000000000000   |     call reverse
+0x148: 707d01000000000000   |     jmp done
+                            | 
+                            | 
+                            | 
+                            | #long get_addr(long *arr, int index)
+                            | #arr in %rdi, index in %rsi
+0x151:                      | get_addr:
+0x151: 2070                 |     rrmovq %rdi, %rax
+0x153:                      | loop1:
+0x153: 6266                 |     andq %rsi, %rsi
+0x155: 738801000000000000   |     je done2                    #if index = 0 (counting down)
+0x15e: c0770800000000000000 |     leaq 8(%rdi),%rdi
+0x168: c066ffffffffffffffff |     leaq -1(%rsi),%rsi
+0x172: 2070                 |     rrmovq %rdi, %rax           #increment by 8 bytes
+0x174: 705301000000000000   |     jmp loop1
+                            |     
+                            | 
+                            | 
+0x17d:                      | done:
+0x17d: c0443000000000000000 |     leaq 48(%rsp), %rsp
+0x187: 90                   |     ret
+0x188:                      | done2:
+0x188: 90                   |     ret
+                            | 
+0x400:                      |     	.pos 0x400		
+0x400:                      |     stack:	

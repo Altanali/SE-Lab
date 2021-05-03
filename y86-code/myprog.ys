@@ -1,65 +1,82 @@
-# myprog: search 2d array, colume major
+# myprog: recursively reverse a given array
 	.pos 0
 	irmovq stack, %rsp  	# Set up stack pointer
 	call main		# Execute main program
 	halt			# Terminate program 
 
-# 4x4 matrix
-	.align 8
-array:	.quad 0x8a
-	.quad 0x55
-	.quad 0x0c
-    .quad 0xe3
-    .quad 0xe2
-	.quad 0x7d
-    .quad 0x25
-    .quad 0xf5
-    .quad 0xf4
-	.quad 0x34
-	.quad 0xe9
-    .quad 0x7b
-    .quad 0xf6
-	.quad 0xd3
-    .quad 0x12
-    .quad 0x65
+
+# Array of 10 integers (words)
+array:	.quad 0x01
+	.quad 0x02
+	.quad 0x03
+    .quad 0x04
+    .quad 0x05
+	.quad 0x06
+    .quad 0x07
+    .quad 0x08
+    .quad 0x09
+	.quad 0x0a
+
 
 main:
     irmovq array,%rdi
-	irmovq $4,%rsi
-	call searchMin		# searchMin(array, 4)
+	irmovq $9, %rdx
+    irmovq $0, %rsi
+	call reverse		# searchMin(array, 4)
 	ret
 
-# long searchMin(long *start, long dim)
-# start in %rdi, dim in %rsi
-searchMin:
-    irmovq $1,%r8       # Constant 1
-	irmovq $8,%r9       # Constant 8
-	irmovq $32,%r10     # Constant 32
-    irmovq $128,%r11    # Constant 128
-    mrmovq (%rdi),%rax  # min = *start
-    rrmovq %rsi,%r12    # numCol = dim
-    andq %r12,%r12	    # Set CC
-    jmp     test1       # goto test1
-loop1:
-    rrmovq %rsi,%r13    # numRow = dim
-    andq %r13,%r13	    # Set CC
-    jmp     test2       # goto test2
-loop2:
-    mrmovq (%rdi),%r14  # get current element
-    subq %rax,%r14      # compare to min, set CC
-    mrmovq (%rdi),%r14  #
-    cmovl %r14,%rax     # if ele < min, min = ele
-    addq %r10,%rdi      # next row
-	subq %r8,%r12       # numRow--, set CC
-test2:
-    jne loop2           # Stop when 0
-    subq %r11,%rdi      #
-    addq %r9,%rdi       # next col
-	subq %r10,%r12      # numcol--, set CC
-test1:
-    jne loop1           # Stop when 0
-    ret                 # return
 
-# The stack starts here and grows to lower addresses
-	.pos 0x400		
-stack:	 
+# void reverse(long *arr, int start, int end)
+# arr in %rdi, start in %rsi, end in %rdx
+reverse:
+    rrmovq %rsp, %rbp
+    leaq -48(%rsp), %rsp
+    rmmovq %rdi, -24(%rbp)
+    rmmovq %rsi, -32(%rbp)
+    rmmovq %rdx, -40(%rbp)   
+    rrmovq %rdx, %r9
+    subq %rsi, %r9              # Comparing start and end indices
+    jle done                    # Base case, end <= start
+    call get_addr               # Gets address of index start in array
+    rrmovq %rax, %r9            # Move &arr[start] to %r9
+    rrmovq %rdx, %rsi          
+    mrmovq -24(%rbp), %rdi 
+    call get_addr               # Gets address of index end in array
+    rrmovq %rax, %r10           # Move &arr[end] to %r10
+    mrmovq 0(%r9), %r11         # Write arr[start] to a temporary register
+    mrmovq 0(%r10), %r12        # Write arr[end] to a temporary register
+    rmmovq %r12, 0(%r9)         # Write arr[end] to &arr[start]
+    rmmovq %r11, 0(%r10)        # Write arr[start] to &arr[end]
+    mrmovq -32(%rbp), %rsi      
+    leaq 1(%rsi), %rsi          # Place start++ into first-parameter register
+    mrmovq -40(%rbp), %rdx
+    leaq -1(%rdx), %rdx         # Place end-- into second-parameter register
+    mrmovq -24(%rbp), %rdi      # Place &array into %rdi
+    call reverse
+    jmp done
+
+
+
+#long get_addr(long *arr, int index)
+#arr in %rdi, index in %rsi
+get_addr:
+    rrmovq %rdi, %rax
+loop1:
+    andq %rsi, %rsi
+    je done2                    #if index = 0 (counting down)
+    leaq 8(%rdi),%rdi
+    leaq -1(%rsi),%rsi
+    rrmovq %rdi, %rax           #increment by 8 bytes
+    jmp loop1
+    
+
+
+done:
+    leaq 48(%rsp), %rsp
+    ret
+done2:
+    ret
+
+    	.pos 0x400		
+    stack:	
+    
