@@ -561,6 +561,7 @@ void do_fetch_stage()
         case HPACK(I_RMMOVQ, F_NONE) :
         case HPACK(I_MRMOVQ, F_NONE) : 
         case HPACK(I_IRMOVQ, F_NONE) : 
+        case HPACK(I_LEAQ, F_NONE) :
             //fetch valc + 2 register bytes.
             imem_error |= !get_byte_val_I(mem, selected_PC + 1, &register_byte);
             decode_input->ra = HI4(register_byte);
@@ -688,6 +689,10 @@ void do_decode_stage()
             execute_input->srcb = REG_RSP;
             execute_input->deste = REG_RSP;
             break;
+        case(I_LEAQ):
+            execute_input->srcb = decode_output->rb;
+            execute_input->deste = decode_output->ra;
+            break;
         default:
             execute_input->destm = 0; 
             break;
@@ -789,6 +794,10 @@ void do_execute_stage()
             memory_input->takebranch = cond_holds(cc, memory_input->ifun);
             memory_input->vala = execute_output->vala;
             break;
+        case(I_LEAQ):
+            memory_input->vale = execute_output->valc + execute_output->valb;
+            printf("LEAQ: valc = %llu, valb = %llu\n", execute_output->valc, execute_output->valb);
+            break;
         default:
             sim_log("Invalid icode\n");
             break;
@@ -886,6 +895,10 @@ void do_memory_stage()
             writeback_input->vale = memory_output->vale + 8;
             writeback_input->deste = REG_RSP;
             writeback_input->destm = memory_output->destm;
+            break;
+        case(I_LEAQ):
+            writeback_input->vale = memory_output->vale;
+            writeback_input->deste = memory_output->deste;
             break;
         default:
             sim_log("Invalid icode\n.");
@@ -1019,6 +1032,7 @@ void do_stall_check()
         return;
     }
     switch(temp) {
+        case(I_LEAQ):
         case(I_ALU):
         case(I_RMMOVQ):
             ra = decode_output->ra;
